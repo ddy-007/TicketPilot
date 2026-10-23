@@ -1,0 +1,2 @@
+# Evaluation fingerprints include line endings; preserve measured source bytes.
+* -text

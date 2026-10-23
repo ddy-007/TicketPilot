@@ -1,0 +1,12 @@
+flowchart LR
+    B[浏览器工作台<br/>操作员 / 审批员] --> A[FastAPI API<br/>角色校验 · 幂等创建 · 审批哈希]
+    A --> D[(PostgreSQL<br/>Run / Job / Approval / Operation)]
+    D --> W[单 Worker<br/>持久队列 · 有界恢复]
+    W --> G[LangGraph<br/>查证 → 提案 → interrupt → 恢复]
+    G --> L[真实模型供应商<br/>只允许三个只读工具]
+    G --> C[(PostgreSQL checkpoint<br/>跨进程保存图位置)]
+    G --> R[服务端执行控制<br/>正式审批 · 有效期 · 版本检查]
+    R --> S[模拟业务 HTTP API<br/>稳定幂等键 · 原子写入]
+    S --> O[(订单与履约事件<br/>FAILED → QUEUED)]
+    O --> V[查询幂等结果并验证订单<br/>确认 / 失败 / UNKNOWN]
+    V --> D

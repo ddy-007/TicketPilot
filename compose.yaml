@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_DB: ticketpilot
+      POSTGRES_USER: ticketpilot
+      POSTGRES_PASSWORD: local-dev-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ticketpilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketpilot -d ticketpilot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: &backend_build
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ticketpilot-backend:m0
+    command: ["python", "-m", "app.migrate"]
+    environment: &database_environment
+      APP_ENV: local
+      APP_DATABASE_URL: postgresql+psycopg://ticketpilot:local-dev-only@postgres:5432/ticketpilot
+      CHECKPOINT_DATABASE_URL: postgresql://ticketpilot:local-dev-only@postgres:5432/ticketpilot
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: *backend_build
+    image: ticketpilot-backend:m0
+    environment:
+      <<: *database_environment
+      SIMULATOR_BASE_URL: http://simulator:8001
+      SIMULATOR_READ_TOKEN: ${SIMULATOR_READ_TOKEN:-}
+      DEMO_OPERATOR_TOKEN: ${DEMO_OPERATOR_TOKEN:-}
+      DEMO_APPROVER_TOKEN: ${DEMO_APPROVER_TOKEN:-}
+    ports:
+      - "127.0.0.1:8010:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=10)"]
+      interval: 5s
+      timeout: 12s
+      retries: 10
+
+  simulator:
+    build: *backend_build
+    image: ticketpilot-backend:m0
+    command: ["uvicorn", "simulator.main:create_simulator_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      SIMULATOR_DATABASE_URL: postgresql+psycopg://ticketpilot:local-dev-only@postgres:5432/ticketpilot
+      SIMULATOR_READ_TOKEN: ${SIMULATOR_READ_TOKEN:-}
+      SIMULATOR_WRITE_TOKEN: ${SIMULATOR_WRITE_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/live', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  recovery:
+    image: ticketpilot-backend:m0
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.experiments.recovery"]
+    environment: *database_environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  llm-smoke:
+    image: ticketpilot-backend:m0
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.experiments.llm_smoke"]
+    environment:
+      <<: *database_environment
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
+
+  diagnose:
+    image: ticketpilot-backend:m0
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "app.agent.cli"]
+    environment:
+      <<: *database_environment
+      SIMULATOR_BASE_URL: http://simulator:8001
+      SIMULATOR_READ_TOKEN: ${SIMULATOR_READ_TOKEN:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
+    depends_on:
+      simulator:
+        condition: service_healthy
+
+  worker:
+    image: ticketpilot-backend:m0
+    command: ["python", "-m", "app.execution.worker"]
+    environment:
+      <<: *database_environment
+      SIMULATOR_BASE_URL: http://simulator:8001
+      SIMULATOR_READ_TOKEN: ${SIMULATOR_READ_TOKEN:-}
+      SIMULATOR_WRITE_TOKEN: ${SIMULATOR_WRITE_TOKEN:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-30}
+    depends_on:
+      simulator:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+volumes:
+  ticketpilot_pgdata:

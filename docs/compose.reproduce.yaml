@@ -1,0 +1,24 @@
+# Disposable local startup acceptance. Use only with -p ticketpilot-m5-repro.
+# Public synthetic credentials are intentionally limited to local test containers.
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:15432:5432"
+  api:
+    ports: !override
+      - "127.0.0.1:18010:8000"
+    environment:
+      DEMO_OPERATOR_TOKEN: oooooooooooooooooooooooooooooooooooooooo
+      DEMO_APPROVER_TOKEN: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      SIMULATOR_READ_TOKEN: rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+  simulator:
+    environment:
+      SIMULATOR_READ_TOKEN: rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+      SIMULATOR_WRITE_TOKEN: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+  worker:
+    environment:
+      SIMULATOR_READ_TOKEN: rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+      SIMULATOR_WRITE_TOKEN: wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+      LLM_BASE_URL: ""
+      LLM_MODEL: ""
+      LLM_API_KEY: ""
