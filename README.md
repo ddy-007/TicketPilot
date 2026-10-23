@@ -1,10 +1,10 @@
 # TicketPilot
 
-单场景、可审批、可恢复的售后履约重试 Agent。**M0～M4 已完成；M5 已完成确定性评测与交付材料，真实模型最终验收被 HTTP 402 阻塞**。只有供应商恢复、真实 dev/test 结果可复核后才把 M5 标为完成。
+单场景、可审批、可恢复的售后履约重试 Agent。**M0～M5 已完成验收**：真实模型 dev 3/4、首次冻结 test 12/12；固定流程 16/16；独立云端机器完成部署与浏览器演示。保留开发集的诊断失败，不把小样本成绩外推为生产成功率。
 
 面向“订单已支付但履约入队失败”的售后工单：模型只读查证并提出建议，人工审批后由 Worker 校验订单版本、执行幂等重试。FastAPI 工作台、LangGraph 检查点与 PostgreSQL 持久任务共同支持审批中断恢复和写响应丢失后的结果查证。数据全部为合成夹具；演示中的固定模型与真实模型评测分别标注。
 
-[三分钟演示视频](https://github.com/ddy-007/TicketPilot/releases/tag/demo-2026-10-23)（Release 中的 MP4；需仓库访问权限，固定模型演示） · [本轮完善与验证](docs/后续完善-验证.md)
+[独立机器三分钟演示与证据包](https://github.com/ddy-007/TicketPilot/releases/tag/m5-final-2026-10-23)（需仓库权限，录像为固定模型演示） · [M5 最终验收](docs/M5-最终验收.md)
 
 ## 从 GitHub 全新克隆
 
@@ -51,8 +51,8 @@ cd ..
 - 真实模型的文本、只读工具调用闭环及结构化输出已在独立 Docker 容器中通过。
 - 锁定版本：LangGraph 0.6.11、langgraph-checkpoint-postgres 3.0.5、OpenAI SDK 1.109.1；其余见 backend/uv.lock。宿主机实际测试 Python 3.12.13。
 - 工作台由 API 同源提供，打开 `http://127.0.0.1:8010/`；前端依赖见 `frontend/package-lock.json`。
-- 最新后端完整回归 253 passed、0 skipped；前端类型检查、构建和 3 项单测通过；上一轮浏览器完整回归 25 passed。BusinessClient 已将请求开始、请求耗时和退避等待分别记录，新增 3 项回归。
-- M5 冻结 16 条案例（4 dev / 12 test），最新固定流程 16/16 符合预期，复算摘要一致。10 月 23 日再次运行真实 dev，首个案例的唯一请求返回 HTTP 402 后自动停止；usage 未返回，真实 test 尚未运行，费用未知。固定模型替身不计为真实模型评测。
+- 最新 GitHub Ubuntu 回归：Python 3.11/3.12 各 267 passed、0 skipped；前端类型检查、构建和 3 项单测通过；独立机器 Chromium 浏览器 25 passed。BusinessClient 分开记录请求开始、HTTP 耗时和退避等待。
+- M5 冻结 16 条案例（4 dev / 12 test）：固定流程 16/16；真实模型 dev 3/4、首次 test 12/12，三份报告离线复算一致。58 次真实调用共 106677 token，usage 全部已知；按实际用量与官方价估算 ¥0.08914364，余额前后减少 ¥0.09。付款十分钟的 dev 诊断冲突已被规则拦截；本场景固定流程更快，未证明模型更优。旧 HTTP 402 及未知费用记录另保留。
 - 交付入口：[全项目审查修复验证](docs/全项目审查-修复验证.md)、[M5 修复验证](docs/M5-修复验证.md)、[M5 评测报告](docs/M5-评测报告.md)、[演示与复现](docs/M5-演示与复现.md)、[架构图](docs/architecture.svg)、三分钟录像（本地：`artifacts/m5-demo-delivery-2026-10-23.mp4`）、[简历条目](docs/简历条目.md)、[M5 审查记录](docs/M5-审查记录.md)。
 
 ![TicketPilot 架构](docs/architecture.svg)
@@ -71,7 +71,7 @@ if ($LASTEXITCODE -ne 0) { throw '固定流程未完成，请检查本次报告�
 uv run --directory backend --locked python -m evaluation.rescore --input $report --output $rescored
 ```
 
-真实模型需要显式 `--real-model` 和总调用预算，先 dev、再冻结 test；当前供应商 HTTP 402，已停止后续调用。指标分子、分母、用量未知值、全部失败尝试及恢复说明见评测报告；不能将固定流程 12/12 写为真实 Agent 成功率。首次 Git 提交之前的历史评测使用 SHA-256 与测量时源码快照追踪版本；后续变更使用 Git 记录。
+真实模型需要显式 `--real-model` 和总调用预算，先 dev、再冻结 test；最终验收已在用户恢复余额后完成。指标分子、分母、计价来源、全部失败尝试及恢复说明见评测报告；固定流程和真实 Agent 分别统计。首次 Git 提交之前的历史评测使用 SHA-256 与测量时源码快照追踪版本；后续变更使用 Git 记录。
 
 当前使用 m5-v3：异常转人工不能计为成功，全库副作用与全部 Worker 读写路径均受核验，调用意图和 usage 逐次原子落盘。旧报告缺少全库审计时标为需重跑，不能通过重评分补造安全结论。最新真实 dev 的失败尝试和官方计价来源见[评测报告](docs/M5-评测报告.md)。
 
