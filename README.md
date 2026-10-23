@@ -2,6 +2,46 @@
 
 单场景、可审批、可恢复的售后履约重试 Agent。**M0～M4 已完成；M5 已完成确定性评测与交付材料，真实模型最终验收被 HTTP 402 阻塞**。只有供应商恢复、真实 dev/test 结果可复核后才把 M5 标为完成。
 
+面向“订单已支付但履约入队失败”的售后工单：模型只读查证并提出建议，人工审批后由 Worker 校验订单版本、执行幂等重试。FastAPI 工作台、LangGraph 检查点与 PostgreSQL 持久任务共同支持审批中断恢复和写响应丢失后的结果查证。数据全部为合成夹具；演示中的固定模型与真实模型评测分别标注。
+
+[三分钟演示视频](https://github.com/ddy-007/TicketPilot/releases/tag/demo-2026-10-23)（Release 中的 MP4；需仓库访问权限，固定模型演示） · [本轮完善与验证](docs/后续完善-验证.md)
+
+## 从 GitHub 全新克隆
+
+需要 Git、uv、Python 3.11/3.12、Node 22.12～24、Docker Compose 2.24.4+（Linux Engine）。仓库目前为私有，需要已有访问权限；无需复制作者的 `.env` 或 `artifacts/`。
+
+```powershell
+git clone https://github.com/ddy-007/TicketPilot.git
+cd TicketPilot
+uv sync --directory backend --locked --python 3.12
+uv run --project backend --locked python scripts/init_local_env.py
+docker compose up -d --wait postgres
+```
+
+初始化脚本只在 `.env` 不存在时创建配置，并生成四枚不同的随机角色/内部 Token，不打印它们；已有文件保持原样。模型配置默认留空，下面的回归、固定流程评测和报告复算均不调用模型。浏览器演示需要的角色 Token 在自己的 `.env` 中查看，仅供本地使用。
+
+```powershell
+$env:M0_TEST_ADMIN_URL = 'postgresql://ticketpilot:local-dev-only@127.0.0.1:5432/postgres'
+uv run --directory backend --locked pytest -q --junitxml=../artifacts/backend.xml
+uv run --directory backend --locked python ../scripts/check_ci_results.py --junit ../artifacts/backend.xml
+uv run --directory backend --locked ruff check app migrations tests simulator evaluation ../scripts
+uv run --directory backend --locked ruff format --check app migrations tests simulator evaluation ../scripts
+cd frontend
+npm ci --ignore-scripts --no-audit --no-fund
+npm run typecheck
+npm test
+npm run build
+cd ..
+```
+
+接着执行下节“生成新报告 → 复算该报告”。启动工作台见下文 Docker 启动；浏览器完整验收另外需要 Edge 和 Playwright FFmpeg，见[演示与复现](docs/M5-演示与复现.md)。源码仓库不附带历史日志、报告、录像和交付 ZIP；拿到本地交付包时，才可以按该文档的“本地交付包”部分复核历史文件。
+
+## 自动检查与手动模型评测
+
+[GitHub Actions](https://github.com/ddy-007/TicketPilot/actions/workflows/ci.yml) 在 push/PR 时运行 Ruff、隐私扫描、Python 3.11/3.12 后端完整测试（含独立 PostgreSQL 随机库，要求 0 skipped）、前端类型检查/单测/构建，以及新固定流程报告的生成和复算。自动检查没有模型密钥；测试和评测不会修改演示库。
+
+真实模型使用独立的 `Manual real model evaluation` 手动工作流：仅 main、显式勾选付费确认、选择 dev/test、设置 1～72 次总调用上限（默认 1）。在 `model-evaluation` Environment 中自行配置 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY` Secrets；本地密钥不会自动上传。先 dev，冻结源码与提示词后再 test；供应商错误立即停止，部分报告仍保存 14 天。调用次数上限不等于金额上限；定价或 usage 不全时成本为未知。
+
 ## 当前状态（2026-10-23）
 
 - Docker Linux Engine 和 PostgreSQL 16.15 已启动。
@@ -11,8 +51,8 @@
 - 真实模型的文本、只读工具调用闭环及结构化输出已在独立 Docker 容器中通过。
 - 锁定版本：LangGraph 0.6.11、langgraph-checkpoint-postgres 3.0.5、OpenAI SDK 1.109.1；其余见 backend/uv.lock。宿主机实际测试 Python 3.12.13。
 - 工作台由 API 同源提供，打开 `http://127.0.0.1:8010/`；前端依赖见 `frontend/package-lock.json`。
-- 最新后端完整回归 250 passed、0 skipped；前端构建和 3 项单测通过，浏览器完整回归 25 passed。全项目审查新增的 4 项问题已修复，原复现探针 4/4 通过；同一 Run 的过期历史结果查证继续通过。
-- M5 冻结 16 条案例（4 dev / 12 test），固定流程 16/16 符合预期。真实 Agent 旧 dev 4 条均遇到供应商 API 错误；本次最小探测 HTTP 402，真实 test 尚未运行，费用未知。固定模型替身不计为真实模型评测。
+- 最新后端完整回归 253 passed、0 skipped；前端类型检查、构建和 3 项单测通过；上一轮浏览器完整回归 25 passed。BusinessClient 已将请求开始、请求耗时和退避等待分别记录，新增 3 项回归。
+- M5 冻结 16 条案例（4 dev / 12 test），最新固定流程 16/16 符合预期，复算摘要一致。10 月 23 日再次运行真实 dev，首个案例的唯一请求返回 HTTP 402 后自动停止；usage 未返回，真实 test 尚未运行，费用未知。固定模型替身不计为真实模型评测。
 - 交付入口：[全项目审查修复验证](docs/全项目审查-修复验证.md)、[M5 修复验证](docs/M5-修复验证.md)、[M5 评测报告](docs/M5-评测报告.md)、[演示与复现](docs/M5-演示与复现.md)、[架构图](docs/architecture.svg)、三分钟录像（本地：`artifacts/m5-demo-delivery-2026-10-23.mp4`）、[简历条目](docs/简历条目.md)、[M5 审查记录](docs/M5-审查记录.md)。
 
 ![TicketPilot 架构](docs/architecture.svg)
@@ -23,22 +63,25 @@
 
 ```powershell
 $env:M0_TEST_ADMIN_URL = 'postgresql://ticketpilot:local-dev-only@127.0.0.1:5432/postgres'
-uv run --directory backend --locked python -m evaluation.run --baseline fixed --split all --output ../artifacts/m5-fixed-rerun.json
-# 只重算已有测量，无需访问模型或数据库。
-uv run --directory backend --locked python -m evaluation.rescore --input ../artifacts/m5-fixed-v3-2026-10-23.json --output ../artifacts/m5-fixed-recomputed.json
+$report = '../artifacts/fixed-' + [guid]::NewGuid().ToString('N') + '.json'
+$rescored = $report.Replace('.json', '-rescored.json')
+uv run --directory backend --locked python -m evaluation.run --baseline fixed --split all --output $report
+if ($LASTEXITCODE -ne 0) { throw '固定流程未完成，请检查本次报告。' }
+# 输入就是上一条命令新生成的报告；复算无需模型或数据库。
+uv run --directory backend --locked python -m evaluation.rescore --input $report --output $rescored
 ```
 
 真实模型需要显式 `--real-model` 和总调用预算，先 dev、再冻结 test；当前供应商 HTTP 402，已停止后续调用。指标分子、分母、用量未知值、全部失败尝试及恢复说明见评测报告；不能将固定流程 12/12 写为真实 Agent 成功率。首次 Git 提交之前的历史评测使用 SHA-256 与测量时源码快照追踪版本；后续变更使用 Git 记录。
 
-当前使用 m5-v3：异常转人工不能计为成功，全库副作用与全部 Worker 读写路径均受核验，调用意图和 usage 逐次原子落盘。旧报告缺少全库审计时标为需重跑，不能通过重评分补造安全结论。四项审查缺陷已修复；本轮没有重试真实模型，HTTP 402 是既有探测记录。
+当前使用 m5-v3：异常转人工不能计为成功，全库副作用与全部 Worker 读写路径均受核验，调用意图和 usage 逐次原子落盘。旧报告缺少全库审计时标为需重跑，不能通过重评分补造安全结论。最新真实 dev 的失败尝试和官方计价来源见[评测报告](docs/M5-评测报告.md)。
 
 全项目后续修复还覆盖：另一 Run 的共享操作不覆盖本轮拒绝终态；工单列表每页最多 25 条摘要，正文通过详情接口读取；M0 工具探测失败保留先前已知用量；只读 HTTP 每次尝试记录独立开始时间和耗时。最新固定基线已按修复后源码重跑 16/16，原始数据为 `artifacts/m5-fixed-project-fixes-2026-10-23.json`，旧报告继续保留。
 
 ## 本地配置
 
-项目根目录已创建未提交的 `.env`。新机器先复制 `.env.example` 为 `.env`，不要覆盖已填写的配置。模拟器需要内部读写 Token；API 只持有读凭证，Worker 持有读写凭证，浏览器不接收内部凭证。浏览器临时输入两个演示角色 Token 之一。
+新机器先运行上面的 `scripts/init_local_env.py` 创建 `.env`，不要覆盖已填写的配置。模拟器需要内部读写 Token；API 只持有读凭证，Worker 持有读写凭证，浏览器不接收内部凭证。浏览器临时输入两个演示角色 Token 之一。
 
-你只需填写：
+需要真实模型时，再在自己的 `.env` 填写：
 
 ```dotenv
 LLM_BASE_URL=供应商提供的完整兼容接口根地址
@@ -59,10 +102,11 @@ docker compose run --rm migrate
 docker compose run --rm simulator python -m simulator.seed --scenario demo
 docker compose run --rm simulator python -m simulator.seed --scenario approval-demo
 docker compose up -d --wait api simulator
-docker compose up -d worker
 Invoke-RestMethod http://127.0.0.1:8010/health/live
 Invoke-RestMethod http://127.0.0.1:8010/health/ready
 ```
+
+此时可访问工作台，尚未启动模型任务处理。真实模型配置完成、接受供应商费用后，再运行 `docker compose up -d worker`，随后在工作台创建诊断任务。
 
 API 和工作台的宿主机端口是 **8010**，容器内部端口是 8000。PostgreSQL 仅发布到本机 127.0.0.1:5432，供宿主机开发和测试使用。基础镜像均固定 digest；后端通过 `uv sync --frozen --no-dev`、前端通过 `npm ci` 使用锁文件安装依赖。两个种子命令只补充缺失数据，不重置已执行的订单。
 

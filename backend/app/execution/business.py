@@ -16,7 +16,9 @@ class RemoteError(ValueError):
 
 
 class BusinessClient:
-    def __init__(self, settings, *, read=None, write=None, guard=None):
+    def __init__(
+        self, settings, *, read=None, write=None, guard=None, clock=None, sleep=None, now=None
+    ):
         self.read = read or httpx.Client(
             base_url=settings.simulator_base_url,
             follow_redirects=False,
@@ -37,6 +39,9 @@ class BusinessClient:
             )
             self.owned_write = True
         self.guard = guard or (lambda: None)
+        self.clock = clock or time.monotonic
+        self.sleep = sleep or time.sleep
+        self.now = now or (lambda: datetime.now(UTC))
         self.audit = None
         self.before_post = None
 
@@ -58,11 +63,14 @@ class BusinessClient:
         logical_call_id = "call_" + uuid4().hex
         for attempt in range(3 if method == "GET" else 1):
             self.guard()
-            started = time.monotonic()
+            started, started_at = None, None
+            retry_delay = 0
             status, result, error = None, None, None
             try:
                 if method == "POST" and self.before_post is not None:
                     self.before_post()
+                started_at = self.now().isoformat()
+                started = self.clock()
                 with client.stream(
                     method, path, headers=headers, json=payload, timeout=httpx.Timeout(5, connect=2)
                 ) as response:
@@ -70,7 +78,7 @@ class BusinessClient:
                     if status != 200:
                         error = "BUSINESS_HTTP_ERROR"
                         if method == "GET" and status in {429, 500, 502, 503, 504} and attempt < 2:
-                            time.sleep(0.1 * (attempt + 1))
+                            retry_delay = 0.1 * (attempt + 1)
                             continue
                         raise RemoteError("BUSINESS_HTTP_ERROR", status)
                     body = bytearray()
@@ -94,32 +102,46 @@ class BusinessClient:
                 error = "BUSINESS_INVALID_RESPONSE"
                 raise RemoteError("BUSINESS_INVALID_RESPONSE") from None
             finally:
-                if self.audit:
-                    self.audit(
-                        {
-                            "evidence_id": "ev_" + uuid4().hex,
-                            "tool_name": "retry_fulfillment"
-                            if method == "POST"
-                            else "execution_read",
-                            "arguments": {"path": path, "operation_key": key},
-                            "ok": status == 200 and isinstance(result, dict) and error is None,
-                            "data": result if error is None else None,
-                            "error": {"code": error} if error else None,
-                            "meta": {
-                                "observed_at": datetime.now(UTC).isoformat(),
-                                "logical_call_id": logical_call_id,
-                                "duration_ms": round((time.monotonic() - started) * 1000),
-                                "truncated": False,
-                            },
-                            "attempts": [
-                                {
-                                    "attempt_no": attempt + 1,
-                                    "status_code": status,
-                                    "error_code": error,
-                                }
-                            ],
-                        }
+                # Freeze HTTP timing after the stream closes, before any retry wait.
+                duration_ms = 0 if started is None else round((self.clock() - started) * 1000)
+                observed_at = self.now().isoformat()
+                backoff_started = self.clock()
+                try:
+                    if retry_delay:
+                        self.sleep(retry_delay)
+                finally:
+                    backoff_ms = (
+                        round((self.clock() - backoff_started) * 1000) if retry_delay else 0
                     )
+                    if self.audit:
+                        self.audit(
+                            {
+                                "evidence_id": "ev_" + uuid4().hex,
+                                "tool_name": "retry_fulfillment"
+                                if method == "POST"
+                                else "execution_read",
+                                "arguments": {"path": path, "operation_key": key},
+                                "ok": status == 200 and isinstance(result, dict) and error is None,
+                                "data": result if error is None else None,
+                                "error": {"code": error} if error else None,
+                                "meta": {
+                                    "started_at": started_at,
+                                    "observed_at": observed_at,
+                                    "logical_call_id": logical_call_id,
+                                    "duration_ms": duration_ms,
+                                    "backoff_ms": backoff_ms,
+                                    "truncated": False,
+                                },
+                                "attempts": [
+                                    {
+                                        "attempt_no": attempt + 1,
+                                        "status_code": status,
+                                        "error_code": error,
+                                    }
+                                ],
+                            }
+                        )
+
         raise RemoteError("BUSINESS_UNAVAILABLE")
 
     def ticket(self, tenant, ticket_id):
