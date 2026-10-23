@@ -118,3 +118,26 @@ def test_upstream_auth_error_body_is_not_exposed(monkeypatch, status):
         assert "PRIVATE_ERROR_MARKER" not in str(exc.value)
     finally:
         model.close()
+
+
+@pytest.mark.parametrize(
+    "hit,miss,valid",
+    [(12, 8, True), (0, 20, True), (-1, 21, False), (12, 9, False), (True, 19, False)],
+)
+def test_provider_cache_usage_retained_only_when_it_reconciles(monkeypatch, hit, miss, valid):
+    def handler(_request):
+        payload = completion({"content": "synthetic"}).json()
+        payload["usage"].update(prompt_cache_hit_tokens=hit, prompt_cache_miss_tokens=miss)
+        return httpx.Response(200, json=payload)
+
+    model = make_model(monkeypatch, handler)
+    try:
+        usage = model.complete([])["usage"]
+    finally:
+        model.close()
+    assert usage["prompt_tokens"] == 20 and usage["completion_tokens"] == 5
+    assert ("prompt_cache_hit_tokens" in usage) is valid
+    assert ("prompt_cache_miss_tokens" in usage) is valid
+    if valid:
+        assert usage["prompt_cache_hit_tokens"] == hit
+        assert usage["prompt_cache_miss_tokens"] == miss

@@ -7,7 +7,7 @@ export default defineConfig({
   expect: { timeout: 15000 },
   reporter: 'list',
   globalTeardown: './tests/browser/teardown.ts',
-  use: { baseURL: 'http://127.0.0.1:8021', browserName: 'chromium', channel: 'msedge',
+  use: { baseURL: 'http://127.0.0.1:8021', browserName: 'chromium', channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge',
     trace: 'off', screenshot: 'only-on-failure', video: 'off' },
   webServer: {
     command: 'uv run --directory ../backend --locked python -m tests.ui_server',

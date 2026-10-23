@@ -1,0 +1,85 @@
+name: Independent machine reproduction
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: independent-reproduction
+  cancel-in-progress: false
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      M0_TEST_ADMIN_URL: postgresql://ticketpilot:local-dev-only@127.0.0.1:15432/postgres
+      PLAYWRIGHT_CHANNEL: chromium
+      PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../artifacts/browser.xml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require source-only checkout
+        run: |
+          test ! -e .env
+          test ! -e artifacts
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: '0.12.3'
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.23.2'
+          package-manager-cache: false
+      - name: Install locked dependencies and create fresh local configuration
+        run: |
+          uv sync --directory backend --locked
+          uv run --project backend --locked python scripts/init_local_env.py
+          npm ci --ignore-scripts --no-audit --no-fund --prefix frontend
+          npm run build --prefix frontend
+      - name: Install browser, video encoder and Chinese fonts
+        working-directory: frontend
+        run: |
+          node node_modules/@playwright/test/cli.js install --with-deps chromium ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Build and start empty Compose deployment
+        run: |
+          docker compose -p ticketpilot-m5-repro -f compose.yaml -f docs/compose.reproduce.yaml build migrate
+          docker compose -p ticketpilot-m5-repro -f compose.yaml -f docs/compose.reproduce.yaml up -d --wait api simulator
+          docker compose -p ticketpilot-m5-repro -f compose.yaml -f docs/compose.reproduce.yaml run --rm simulator python -m simulator.seed --scenario demo
+          docker compose -p ticketpilot-m5-repro -f compose.yaml -f docs/compose.reproduce.yaml run --rm simulator python -m simulator.seed --scenario approval-demo
+          uv run --project backend --locked python scripts/check_reproduction.py
+      - name: Generate and rescore a new fixed-flow report
+        run: |
+          uv run --directory backend --locked python -m evaluation.run --baseline fixed --split all --output ../artifacts/fixed.json
+          uv run --directory backend --locked python -m evaluation.rescore --input ../artifacts/fixed.json --output ../artifacts/fixed-rescored.json
+      - name: Browser golden path and exception paths with real PostgreSQL and Worker
+        working-directory: frontend
+        run: node node_modules/@playwright/test/cli.js test --reporter=list,junit
+      - name: Verify zero skips and identical offline scores
+        run: uv run --project backend --locked python scripts/check_ci_results.py --junit artifacts/browser.xml --report artifacts/fixed.json --rescored artifacts/fixed-rescored.json
+      - name: Record three-minute demonstration on this independent runner
+        working-directory: frontend
+        run: node scripts/record-demo.mjs ../artifacts/cloud-demo.mp4 ../artifacts/fixed.json
+      - name: Remove only this disposable Compose deployment
+        if: always()
+        run: docker compose -p ticketpilot-m5-repro -f compose.yaml -f docs/compose.reproduce.yaml down --volumes
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: independent-reproduction-${{ github.run_id }}
+          path: |
+            artifacts/reproduction.json
+            artifacts/fixed.json
+            artifacts/fixed-rescored.json
+            artifacts/browser.xml
+            artifacts/m4-workbench-approved.png
+            artifacts/cloud-demo.mp4
+            artifacts/cloud-demo-evidence.json
+            artifacts/m5-recording-*/*.png
+          retention-days: 14
+          if-no-files-found: warn

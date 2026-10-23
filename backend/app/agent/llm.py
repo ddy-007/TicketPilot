@@ -110,6 +110,17 @@ class Model:
             if usage
             else None
         )
+        if usage_data is not None:
+            hit = getattr(usage, "prompt_cache_hit_tokens", None)
+            miss = getattr(usage, "prompt_cache_miss_tokens", None)
+            if (
+                type(hit) is int
+                and type(miss) is int
+                and hit >= 0
+                and miss >= 0
+                and hit + miss == usage.prompt_tokens
+            ):
+                usage_data.update(prompt_cache_hit_tokens=hit, prompt_cache_miss_tokens=miss)
 
         def protocol_error():
             return ModelError("LLM_PROTOCOL_ERROR", usage=usage_data, model=response.model)

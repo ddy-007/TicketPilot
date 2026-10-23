@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -268,6 +269,7 @@ class MeasuredModel:
             "diagnosis": None,
             "diagnosis_evidence_valid": None,
             "state": "IN_FLIGHT",
+            "started_at": datetime.now(UTC).isoformat(),
         }
         self.journal.append(row)
         checkpoint = self.budget.get("on_model_progress", lambda _journal: None)
@@ -305,6 +307,7 @@ class MeasuredModel:
             raise
         finally:
             row["duration_ms"] = round((time.monotonic() - started) * 1000)
+            row["finished_at"] = datetime.now(UTC).isoformat()
             checkpoint(self.journal)
 
     def close(self):
@@ -558,6 +561,9 @@ def main():
         "call_budget": args.max_model_calls,
         "expected_cases": len(selected) * (2 if args.baseline == "both" else 1),
         "configuration_model": settings.llm_model if args.real_model else None,
+        "provider": "deepseek_official"
+        if args.real_model and urlparse(settings.llm_base_url).hostname == "api.deepseek.com"
+        else None,
         "rows": [],
         "complete": False,
         "billing": {"amount": None, "status": "UNKNOWN_PRICING_OR_USAGE"},

@@ -8,6 +8,13 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const output = path.resolve(process.argv[2] ?? path.join(root, 'artifacts/m5-demo-2026-10-23.mp4'));
+if (!process.argv[3]) throw new Error('Supply the freshly generated fixed-flow report as the third argument.');
+const fixed = JSON.parse(await readFile(path.resolve(process.argv[3]), 'utf8'));
+const summary = fixed.summary?.['fixed/test'];
+if (!fixed.complete || fixed.rows?.length !== 16 || !summary ||
+    fixed.rows.some(row => row.baseline !== 'fixed' || row.grade?.passed !== true || row.usage?.calls !== 0)) {
+  throw new Error('Recording requires a complete, passing 16-case fixed-flow report with no model calls.');
+}
 if (!process.env.M0_TEST_ADMIN_URL) throw new Error('Set M0_TEST_ADMIN_URL for a disposable recording.');
 try { await access(output); throw new Error('Output exists; choose a new path.'); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -77,7 +84,7 @@ try {
     await wait(500);
   }
   if (!ready) throw new Error('Recording fixture did not become ready.');
-  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge', headless: true });
   context = await browser.newContext({ viewport: { width: 1440, height: 900 },
     recordVideo: { dir: directory, size: { width: 1440, height: 900 } } });
   page = await context.newPage(); video = page.video();
@@ -124,8 +131,6 @@ try {
   await caption('02:00 | 审批后的版本变化', '测试控制器模拟订单版本从 v3 变为 v4。旧提案被服务端拦截，业务效果为 0。');
   await page.screenshot({ path: path.join(directory, 'stale.png') });
   await until(150);
-  const fixed = JSON.parse(await readFile(path.join(root, 'artifacts/m5-fixed-2026-10-23.json'), 'utf8'));
-  const summary = fixed.summary['fixed/test'];
   await page.setContent('<body><h1>M5 | 评测结果与限制</h1><div id="results"></div></body>');
   // The app CSP persists across setContent; DOM style properties also work with it.
   await page.evaluate(() => {
@@ -134,7 +139,7 @@ try {
     Object.assign(document.querySelector('#results').style, { fontSize: '25px', lineHeight: '2.2', whiteSpace: 'pre-line' });
   });
   await page.locator('#results').evaluate((node, text) => node.textContent = text,
-    `冻结案例：4 dev + 12 test\n固定流程 test：${summary.end_to_end.numerator}/${summary.end_to_end.denominator} 符合预期\n真实 Agent：既有 dev 4 次 API 失败；本次最小探测 HTTP 402\nAgent test 尚未运行，模型费用未知；不能声称模型成功率或收益\n崩溃恢复与幂等性：查看随附完整测试报告与 M5-评测报告.md`);
+    `冻结案例：4 dev + 12 test\n固定流程 test：${summary.end_to_end.numerator}/${summary.end_to_end.denominator} 符合预期\n本录像使用固定模型替身，不代表真实模型成功率\n真实模型成绩、失败记录及费用以单独评测报告为准\n崩溃恢复与幂等性：查看随附完整测试报告与 M5-评测报告.md`);
   await caption('02:30 | 实测数字与已知限制', '固定流程通过不能代替真实模型评测。单场景、单 Worker、合成业务和本地演示身份。');
   await page.screenshot({ path: path.join(directory, 'results.png') });
   await until(180);
@@ -147,6 +152,8 @@ try {
   if (code !== 0) throw new Error('Video encoding failed; original WebM preserved.');
   await writeFile(output.replace(/\.mp4$/i, '-evidence.json'), JSON.stringify({
     fixed_model_substitute: true, synthetic_data: true, measurements, directory,
+    source_sha256: fixed.source_sha256, dataset_sha256: fixed.dataset_sha256,
+    browser_channel: process.env.PLAYWRIGHT_CHANNEL || 'msedge',
   }, null, 2));
   console.log('Saved ' + output);
 } finally {
