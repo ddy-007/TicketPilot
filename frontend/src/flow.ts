@@ -1,12 +1,14 @@
+import type { Run, RunEvent } from './api';
+
 export const terminal = new Set(['SUCCEEDED', 'REJECTED', 'EXPIRED', 'ESCALATED', 'FAILED']);
 
-export const statusLabels = {
+export const statusLabels: Record<string, string> = {
   QUEUED: '任务排队中', RUNNING: '正在诊断或执行', WAITING_APPROVAL: '等待人工审批',
   SUCCEEDED: '本轮已完成', REJECTED: '审批已拒绝', EXPIRED: '审批已过期',
   ESCALATED: '需要人工处理', FAILED: '本轮失败',
 };
 
-export function resultTitle(run) {
+export function resultTitle(run: Pick<Run, 'status' | 'disposition' | 'result_json'>): string {
   if (run.status === 'SUCCEEDED' && run.disposition === 'REQUEUED' &&
       run.result_json?.operation?.status === 'CONFIRMED') return '已重新入队';
   const code = run.result_json?.reason_code;
@@ -18,12 +20,17 @@ export function resultTitle(run) {
   return statusLabels[run.status] || '未知状态';
 }
 
-export function mergeEvents(current, next) {
+export function mergeEvents(current: RunEvent[], next: RunEvent[]): RunEvent[] {
   return [...new Map([...current, ...next].map(e => [e.id, e])).values()]
     .sort((a, b) => a.id - b.id);
 }
 
-export async function drainEvents(fetchPage, cursor, receive, alive = () => true) {
+export async function drainEvents(
+  fetchPage: (after: number) => Promise<{ events: RunEvent[] }>,
+  cursor: number,
+  receive: (next: RunEvent[]) => void,
+  alive: () => boolean = () => true,
+): Promise<number> {
   while (alive()) {
     const page = await fetchPage(cursor);
     if (!alive()) return cursor;

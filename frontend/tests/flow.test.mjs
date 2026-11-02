@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { drainEvents, mergeEvents, resultTitle } from '../src/flow.js';
+import { drainEvents, mergeEvents, resultTitle } from '../src/flow.ts';
 
 test('success title requires server confirmation of requeue', () => {
   assert.equal(resultTitle({ status: 'SUCCEEDED', disposition: 'REQUEUED', result_json: { operation: { status: 'CONFIRMED' } } }), '已重新入队');
