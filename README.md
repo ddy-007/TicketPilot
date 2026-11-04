@@ -6,6 +6,14 @@
 
 [独立机器三分钟演示与证据包](https://github.com/ddy-007/TicketPilot/releases/tag/m5-final-2026-10-23)（需仓库权限，录像为固定模型演示） · [M5 最终验收](docs/M5-最终验收.md)
 
+## 最近更新（2026-11-04 文档同步）
+
+前端优化已随提交 [`57db3ae`](https://github.com/ddy-007/TicketPilot/commit/57db3aebfa11da4682575e342d1d24a2c5dc3049) 合入：工作台拆为 [6 个组件](frontend/src/components)与 [3 个 Hook](frontend/src/hooks)，共用 [flow.ts](frontend/src/flow.ts)；Vite 接入 React 插件，支持开发热更新；配色采用 CSS 变量并跟随系统切换浅色/暗色主题。
+
+同步修复审批过期判断被缓存、暗色主按钮文字辨识度不足、导航后残留上一任务错误，以及旧 `flow.js` 遮蔽 TypeScript 实现的问题。审批卡片在到期及页面恢复时更新；普通刷新仍保留当前任务未确认的提交错误，只有明确离开任务时清除。服务端审批与业务执行约束保持原样。
+
+2026-11-04 本地复验：**Passed**——类型检查、生产构建、3 项单元测试及 6 项前端浏览器专项测试；**Failed**——上述检查无失败；**Not verified**——本轮未重跑完整 PostgreSQL 端到端、Docker 部署或真实模型评测。专项测试使用合成 API 响应，不能替代这些集成验收；未做前后性能测量，不据组件拆分或 memo 推断性能提升。下方 2026-10-23 的 M0～M5 数字及 Release 保留为冻结验收证据。
+
 ## 从 GitHub 全新克隆
 
 需要 Git、uv、Python 3.11/3.12、Node 22.12～24、Docker Compose 2.24.4+（Linux Engine）。仓库目前为私有，需要已有访问权限；无需复制作者的 `.env` 或 `artifacts/`。
@@ -40,11 +48,15 @@ cd ..
 
 [GitHub Actions](https://github.com/ddy-007/TicketPilot/actions/workflows/ci.yml) 在 push/PR 时运行 Ruff、隐私扫描、Python 3.11/3.12 后端完整测试（含独立 PostgreSQL 随机库，要求 0 skipped）、前端类型检查/单测/构建，以及新固定流程报告的生成和复算。自动检查没有模型密钥；测试和评测不会修改演示库。
 
+新增的 6 项前端浏览器专项目前通过 `npm run test:browser:offline` 手动运行，未加入上述 CI。完整 PostgreSQL 浏览器流程另由 `npm run test:e2e` 和独立机器复现工作流验证，两类浏览器测试分别统计。
+
 真实模型使用独立的 `Manual real model evaluation` 手动工作流：仅 main、显式勾选付费确认、选择 dev/test、设置 1～72 次总调用上限（默认 1）。在 `model-evaluation` Environment 中自行配置 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY` Secrets；本地密钥不会自动上传。先 dev，冻结源码与提示词后再 test；供应商错误立即停止，部分报告仍保存 14 天。调用次数上限不等于金额上限；定价或 usage 不全时成本为未知。
 
-## 当前状态（2026-10-23）
+## M0～M5 验收快照（2026-10-23）
 
-- Docker Linux Engine 和 PostgreSQL 16.15 已启动。
+以下是当时的验收记录，不表示本机服务当前仍在运行，也不表示后续前端版本已重跑全部验收。
+
+- 当时 Docker Linux Engine 和 PostgreSQL 16.15 已启动。
 - Alembic 已迁移到 `0004_m3_execution`，checkpoint 独立初始化及重复初始化通过。
 - M1 提供三个只读接口、内部工单列表、履约重试与操作结果查询，S01～S06 已测试。
 - 同一 thread_id 的两个独立进程已完成暂停与恢复，恢复后没有未解决中断。
@@ -340,7 +352,7 @@ M4 审查后，前端同时校验 JSON 和所消费的响应字段，拒绝缺�
 
 ### 本地前端开发
 
-宿主机 Node 22.12+ 或 24；本次实际为 22.23.2。在 frontend 目录：
+宿主机 Node 22.12～24（以 `package.json` 的 engines 为准）；本次复验为 22.23.2。在 frontend 目录：
 
 ```powershell
 npm ci --ignore-scripts
@@ -348,6 +360,29 @@ npm run dev
 ```
 
 Vite 绑定 `127.0.0.1:5173`，仅将 `/api` 代理到本地 `8010`；Token 无需填入任何前端环境变量。正式 Docker 由 FastAPI 同源提供构建文件，没有新增常驻前端服务。镜像构建上下文为仓库根目录（Compose 已配置），根 `.dockerignore` 排除凭证、虚拟环境、node_modules、测试夹具和本地报告。
+
+### 前端专项回归（无需数据库）
+
+在 `frontend` 目录执行，需要 Node、已安装的 Microsoft Edge 及可用的本地端口 8022。无需启动后端、PostgreSQL 或模型服务，无需真实 Token：
+
+```powershell
+npm ci --ignore-scripts --no-audit --no-fund
+npm run typecheck
+npm test
+npm run test:browser:offline
+```
+
+`npm test` 使用 Node 的 `--experimental-strip-types` 直接测试页面共用的 `flow.ts`，不保留旧 JS 实现。`test:browser:offline` 自动先构建生产前端，再启动仅绑定本机的 Vite preview 并执行 [6 项 Playwright 回归](frontend/tests/browser-offline/optimization.spec.ts)。覆盖审批本地到期、系统时间与焦点变化、刷新保留未确认决定、导航清除旧错误，以及浅色/暗色按钮普通与 hover 配色；接口全部由合成响应替代，不调用模型或写业务数据库。
+
+没有 Edge 时，可使用 Playwright Chromium。在同一 PowerShell 会话中先安装浏览器并设置通道，再运行专项：
+
+```powershell
+node node_modules/@playwright/test/cli.js install chromium
+$env:PLAYWRIGHT_CHANNEL = 'chromium'
+npm run test:browser:offline
+```
+
+系统还需满足 Playwright 浏览器的运行依赖；Linux 环境可将安装命令改为 `install --with-deps chromium`。`offline` 指测试不访问真实后端或模型服务，首次安装依赖和浏览器仍需要网络。
 
 ### M4 浏览器回归
 
